@@ -11,7 +11,7 @@ jobs:
     steps:
       - name: Configure Core RDP Settings
         run: |
-          # Enable Remote Desktop and disable Network Level Authentication (if needed)
+          # Enable Remote Desktop and disable Network Level Authentication
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
                              -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
@@ -22,16 +22,16 @@ jobs:
           # Remove any existing rule with the same name to avoid duplication
           netsh advfirewall firewall delete rule name="RDP-Tailscale"
           
-          # For testing, allow any incoming connection on port 3389
+          # Allow any incoming connection on port 3389
           netsh advfirewall firewall add rule name="RDP-Tailscale" `
             dir=in action=allow protocol=TCP localport=3389
 
-          # (Optional) Restart the Remote Desktop service to ensure changes take effect
+          # Restart the Remote Desktop service
           Restart-Service -Name TermService -Force
 
       - name: Create RDP User with Fixed Password
         run: |
-          # استخدام الباسورد المحدد
+          # استخدام الباسورد الثابت
           $password = "r123mm12A@@"
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
           
@@ -93,16 +93,28 @@ jobs:
           }
           Write-Host "TCP connectivity successful!"
 
+      - name: Display RDP Credentials
+        run: |
+          Write-Host "========================================="
+          Write-Host "🔑 RDP ACCESS INFORMATION"
+          Write-Host "========================================="
+          Write-Host "Address (Tailscale IP): $env:TAILSCALE_IP"
+          Write-Host "Username: RDP"
+          Write-Host "Password: r123mm12A@@"
+          Write-Host "========================================="
+          Write-Host "📌 Use these credentials to connect via RDP"
+          Write-Host "========================================="
+
       - name: Maintain Connection
         run: |
-          Write-Host "`n=== RDP ACCESS ==="
+          Write-Host "`n=== RDP IS ACTIVE ==="
           Write-Host "Address: $env:TAILSCALE_IP"
           Write-Host "Username: RDP"
           Write-Host "Password: r123mm12A@@"
-          Write-Host "==================`n"
+          Write-Host "=====================`n"
           
-          # Keep runner active indefinitely (or until manually cancelled)
+          # Keep runner active until manually cancelled
           while ($true) {
-              Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C in workflow to terminate"
+              Write-Host "[$(Get-Date)] ✅ RDP Active - Use 'Cancel workflow' in GitHub to terminate"
               Start-Sleep -Seconds 300
           }
