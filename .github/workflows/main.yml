@@ -4,103 +4,65 @@ on:
   workflow_dispatch:
 
 jobs:
-  secure-rdp:
+  rdp:
     runs-on: windows-latest
     timeout-minutes: 3600
-
     steps:
-      - name: Configure Core RDP Settings
+      - name: 🚀 Free Space & Optimize
         run: |
-          # Enable Remote Desktop
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
-                             -Name "fDenyTSConnections" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
-                             -Name "UserAuthentication" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
-                             -Name "SecurityLayer" -Value 0 -Force
-
-          # Firewall rules
-          netsh advfirewall firewall delete rule name="RDP-Tailscale"
-          netsh advfirewall firewall add rule name="RDP-Tailscale" `
-            dir=in action=allow protocol=TCP localport=3389
-
-          # Restart RDP service
+          # تنظيف المساحة (يكسب 20-30GB)
+          Remove-Item -Path C:\Windows\Temp\* -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path "C:\Program Files\Microsoft Visual Studio" -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path "C:\msys64" -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path "C:\android" -Recurse -Force -ErrorAction SilentlyContinue
+          Dism.exe /online /Cleanup-Image /StartComponentCleanup /ResetBase
+          
+          # تعطيل الصوت والخدمات الثقيلة
+          Stop-Service -Name AudioSrv -Force -ErrorAction SilentlyContinue
+          Stop-Service -Name SysMain -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Audio" -Name "DisableAudio" -Value 1 -Force
+          
+          # إعدادات RDP للسرعة
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "fDisableAudioCapture" -Value 1 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "fEnableAudioRedirection" -Value 0 -Force
+          netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
           Restart-Service -Name TermService -Force
 
-      - name: Create RDP User with Fixed Password
+      - name: 👤 Create User
         run: |
-          # كلمة سر بسيطة ومضمونة
           $password = "P@ssw0rd123"
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          
-          # حذف المستخدم إذا كان موجود
-          if (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue) {
-              Remove-LocalUser -Name "RDP" -Force
-          }
-          
-          # إنشاء المستخدم
+          if (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue) { Remove-LocalUser -Name "RDP" -Force }
           New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires -PasswordNeverExpires
           Add-LocalGroupMember -Group "Administrators" -Member "RDP"
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
-          
-          # تأكيد إنشاء المستخدم
-          $user = Get-LocalUser -Name "RDP"
-          if ($user) {
-              Write-Host "✅ User RDP created successfully!"
-              Write-Host "🔑 Password: P@ssw0rd123"
-          } else {
-              Write-Error "❌ Failed to create user"
-              exit 1
-          }
 
-      - name: Install Tailscale
+      - name: 📦 Install Tailscale
         run: |
-          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
-          $installerPath = "$env:TEMP\tailscale.msi"
-          
-          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
-          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
-          Remove-Item $installerPath -Force
+          Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi" -OutFile "$env:TEMP\tailscale.msi"
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$env:TEMP\tailscale.msi`"", "/quiet", "/norestart" -Wait
 
-      - name: Establish Tailscale Connection
+      - name: 🔗 Connect
         run: |
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
-          
-          $tsIP = $null
-          $retries = 0
-          while (-not $tsIP -and $retries -lt 10) {
-              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
-              Start-Sleep -Seconds 5
-              $retries++
-          }
-          
-          if (-not $tsIP) {
-              Write-Error "Tailscale IP not assigned"
-              exit 1
-          }
-          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=rdp-$env:GITHUB_RUN_ID
+          Start-Sleep -Seconds 10
+          $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+          echo "IP=$ip" >> $env:GITHUB_ENV
+          $free = [math]::Round((Get-PSDrive C).Free / 1GB, 2)
+          echo "SPACE=$free" >> $env:GITHUB_ENV
 
-      - name: Display RDP Credentials
+      - name: 🔑 RDP INFO
         run: |
           Write-Host "========================================="
-          Write-Host "🔑 RDP ACCESS INFORMATION"
+          Write-Host "🚀 RDP READY - FAST & LARGE STORAGE"
           Write-Host "========================================="
-          Write-Host "📍 Address: $env:TAILSCALE_IP"
-          Write-Host "👤 Username: RDP"
-          Write-Host "🔑 Password: P@ssw0rd123"
-          Write-Host "========================================="
-          Write-Host "✅ Copy these credentials now!"
+          Write-Host "IP    : $env:IP"
+          Write-Host "User  : RDP"
+          Write-Host "Pass  : P@ssw0rd123"
+          Write-Host "Sound : 🔇 OFF"
+          Write-Host "Space : $env:SPACE GB FREE"
           Write-Host "========================================="
 
-      - name: Keep Runner Alive
-        run: |
-          Write-Host "`n=== 🟢 RDP IS ACTIVE ==="
-          Write-Host "IP: $env:TAILSCALE_IP"
-          Write-Host "User: RDP"
-          Write-Host "Pass: P@ssw0rd123"
-          Write-Host "========================`n"
-          
-          while ($true) {
-              Write-Host "[$(Get-Date)] ✅ RDP Active - Click 'Cancel workflow' to stop"
-              Start-Sleep -Seconds 300
-          }
+      - name: ⏳ Keep Alive
+        run: while ($true) { Start-Sleep -Seconds 300 }
