@@ -119,38 +119,77 @@ jobs:
       - name: 📦 Install Tailscale
         shell: pwsh
         run: |
+          # تحميل وتثبيت Tailscale
           $url = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
           $installer = "$env:TEMP\ts.msi"
           
+          Write-Host "📥 Downloading Tailscale..."
           Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
-          Start-Process msiexec.exe -ArgumentList "/i `"$installer`" /quiet /norestart" -Wait
-          Remove-Item $installer -Force
           
+          Write-Host "📦 Installing Tailscale..."
+          $process = Start-Process -FilePath "msiexec.exe" -ArgumentList "/i `"$installer`" /quiet /norestart" -Wait -PassThru
+          
+          if ($process.ExitCode -ne 0) {
+            Write-Error "❌ Installation failed with code: $($process.ExitCode)"
+            exit 1
+          }
+          
+          Remove-Item $installer -Force
           Write-Host "✅ Tailscale installed!"
 
       - name: 🔗 Connect to Tailscale
         shell: pwsh
         run: |
-          $ts = "$env:ProgramFiles\Tailscale\tailscale.exe"
-          $hostname = "win-$(Get-Random -Minimum 1000 -Maximum 9999)"
+          # التحقق من وجود Tailscale
+          $tsPaths = @(
+            "$env:ProgramFiles\Tailscale\tailscale.exe",
+            "$env:ProgramFiles (x86)\Tailscale\tailscale.exe",
+            "C:\Program Files\Tailscale\tailscale.exe",
+            "C:\Program Files (x86)\Tailscale\tailscale.exe"
+          )
           
-          # الاتصال
+          $ts = $null
+          foreach ($path in $tsPaths) {
+            if (Test-Path $path) {
+              $ts = $path
+              Write-Host "✅ Found Tailscale at: $ts"
+              break
+            }
+          }
+          
+          if (-not $ts) {
+            Write-Error "❌ Tailscale not found! Checking installation..."
+            Get-ChildItem "C:\Program Files" -Recurse -Filter "tailscale.exe" -ErrorAction SilentlyContinue
+            Get-ChildItem "C:\Program Files (x86)" -Recurse -Filter "tailscale.exe" -ErrorAction SilentlyContinue
+            exit 1
+          }
+          
+          # الاتصال بـ Tailscale
+          $hostname = "win-$(Get-Random -Minimum 1000 -Maximum 9999)"
+          Write-Host "🔗 Connecting to Tailscale..."
+          
           & $ts up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=$hostname
+          
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "❌ Tailscale connection failed!"
+            exit 1
+          }
           
           # انتظار الحصول على IP
           $ip = $null
           $attempts = 0
-          while ($ip -eq $null -and $attempts -lt 15) {
+          while ($ip -eq $null -and $attempts -lt 20) {
             Start-Sleep -Seconds 3
             $ip = & $ts ip -4
             $attempts++
+            Write-Host "⏳ Waiting for IP... ($attempts/20)"
           }
           
           if ($ip) {
             echo "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
             Write-Host "✅ Connected! IP: $ip"
           } else {
-            Write-Error "❌ Failed to get IP"
+            Write-Error "❌ Failed to get IP after 20 attempts"
             exit 1
           }
 
