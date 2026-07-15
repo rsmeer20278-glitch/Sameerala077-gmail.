@@ -1,305 +1,52 @@
-name: 🔥 QuickRDP
+name: RDP-Tailscale
 
 on:
   workflow_dispatch:
-    inputs:
-      duration:
-        description: 'مدة التشغيل (ساعات)'
-        required: false
-        default: '6'
-        type: choice
-        options:
-          - '2'
-          - '4'
-          - '6'
-          - '12'
 
 jobs:
-  setup:
+  rdp:
     runs-on: windows-latest
-    timeout-minutes: 720
-    
+    timeout-minutes: 360
+
     steps:
-      - name: 🧹 Extreme Cleanup
-        shell: pwsh
+      - name: Enable RDP
         run: |
-          # حذف كل الملفات غير الضرورية
-          $folders = @(
-            "C:\Program Files\Microsoft Visual Studio",
-            "C:\msys64",
-            "C:\android",
-            "C:\ProgramData\chocolatey",
-            "C:\Windows\Temp",
-            "C:\Windows\Prefetch",
-            "C:\Users\*\Downloads"
-          )
-          foreach ($f in $folders) {
-            if (Test-Path $f) {
-              Remove-Item -Path $f -Recurse -Force -ErrorAction SilentlyContinue
-              Write-Host "🗑️ Removed: $f"
-            }
-          }
-          
-          # تنظيف عميق
-          Dism.exe /online /Cleanup-Image /StartComponentCleanup /ResetBase /Quiet
-          Write-Host "✅ Cleanup complete!"
-
-      - name: 🚀 System Tweaks
-        shell: pwsh
-        run: |
-          # تعطيل كل الخدمات غير المهمة
-          $services = @("SysMain", "AudioSrv", "AudioEndpointBuilder", "DiagTrack", 
-                       "dmwappushservice", "WSearch", "BITS", "wuauserv")
-          foreach ($s in $services) {
-            Stop-Service -Name $s -Force -ErrorAction SilentlyContinue
-            Set-Service -Name $s -StartupType Disabled -ErrorAction SilentlyContinue
-          }
-          
-          # تعطيل الصوت نهائياً
-          Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Audio" -Name "DisableAudio" -Value 1 -Force
-          
-          # تعطيل التأثيرات البصرية
-          Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" -Name "VisualFXSetting" -Value 2 -Force
-          
-          # تعطيل التحديثات
-          Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" -Name "NoAutoUpdate" -Value 1 -Force
-          
-          Write-Host "✅ System optimized!"
-
-      - name: 🔓 Enable RDP
-        shell: pwsh
-        run: |
-          # تمكين RDP
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
-          
-          # إعدادات الأداء العالي
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "Compress" -Value 1 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "fDisableAudioCapture" -Value 1 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "fEnableAudioRedirection" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "MaxInstanceCount" -Value 2 -Force
-          
-          # فتح الفايروال
-          netsh advfirewall firewall delete rule name="RDP-Quick" -ErrorAction SilentlyContinue
-          netsh advfirewall firewall add rule name="RDP-Quick" dir=in action=allow protocol=TCP localport=3389
-          
-          # إعادة تشغيل الخدمة
+          netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
           Restart-Service -Name TermService -Force
-          Write-Host "✅ RDP enabled!"
 
-      - name: 👤 Create Admin User
-        shell: pwsh
+      - name: Create User
         run: |
-          # بيانات الدخول
-          $username = "Admin"
-          $password = "Secure@2024#Pass"
-          
-          # إنشاء المستخدم
+          $password = "P@ssw0rd123"
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          
-          # حذف المستخدم القديم
-          if (Get-LocalUser -Name $username -ErrorAction SilentlyContinue) {
-            Remove-LocalUser -Name $username -Force
-          }
-          
-          # إنشاء مستخدم جديد
-          New-LocalUser -Name $username -Password $securePass -AccountNeverExpires -PasswordNeverExpires -FullName "Administrator"
-          Add-LocalGroupMember -Group "Administrators" -Member $username
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username
-          
-          # تعطيل كلمة السر المؤقتة
-          Set-LocalUser -Name $username -PasswordNeverExpires $true
-          
-          # حفظ البيانات
-          echo "USERNAME=$username" >> $env:GITHUB_ENV
-          echo "PASSWORD=$password" >> $env:GITHUB_ENV
-          Write-Host "✅ User created: $username"
+          if (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue) { Remove-LocalUser -Name "RDP" -Force }
+          New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
+          Add-LocalGroupMember -Group "Administrators" -Member "RDP"
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
 
-      - name: 📦 Install Tailscale (Fixed)
-        shell: pwsh
+      - name: Install Tailscale
         run: |
-          # تنظيف أي تثبيت سابق
-          Write-Host "🧹 Cleaning old Tailscale installation..."
-          if (Test-Path "C:\Program Files\Tailscale") {
-            Remove-Item -Path "C:\Program Files\Tailscale" -Recurse -Force -ErrorAction SilentlyContinue
-          }
-          if (Test-Path "C:\Program Files (x86)\Tailscale") {
-            Remove-Item -Path "C:\Program Files (x86)\Tailscale" -Recurse -Force -ErrorAction SilentlyContinue
-          }
+          Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi" -OutFile "$env:TEMP\tailscale.msi"
+          Start-Process msiexec.exe -ArgumentList "/i `"$env:TEMP\tailscale.msi`" /quiet /norestart" -Wait
           
-          # تحميل وتثبيت Tailscale
-          $url = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
-          $installer = "$env:TEMP\ts.msi"
-          
-          Write-Host "📥 Downloading Tailscale..."
-          Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
-          
-          Write-Host "📦 Installing Tailscale..."
-          $process = Start-Process -FilePath "msiexec.exe" -ArgumentList "/i `"$installer`" /quiet /norestart" -Wait -PassThru
-          
-          if ($process.ExitCode -ne 0) {
-            Write-Error "❌ Installation failed with code: $($process.ExitCode)"
-            exit 1
-          }
-          
-          Remove-Item $installer -Force
-          
-          # التحقق من التثبيت
-          Start-Sleep -Seconds 5
-          
-          $tsPaths = @(
-            "C:\Program Files\Tailscale\tailscale.exe",
-            "C:\Program Files (x86)\Tailscale\tailscale.exe"
-          )
-          
-          $found = $false
-          foreach ($path in $tsPaths) {
-            if (Test-Path $path) {
-              Write-Host "✅ Tailscale installed at: $path"
-              $found = $true
-              break
-            }
-          }
-          
-          if (-not $found) {
-            Write-Host "❌ Tailscale not found! Trying alternative installation..."
-            
-            # محاولة تثبيت باستخدام Chocolatey
-            Set-ExecutionPolicy Bypass -Scope Process -Force
-            [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
-            iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-            
-            choco install tailscale -y
-          }
-          
-          Write-Host "✅ Tailscale installation complete!"
+      - name: Connect Tailscale
+        run: |
+          Start-Sleep -Seconds 10
+          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=rdp-$env:GITHUB_RUN_ID
+          Start-Sleep -Seconds 10
+          $ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
+          echo "IP=$ip" >> $env:GITHUB_ENV
 
-      - name: 🔗 Connect to Tailscale
-        shell: pwsh
+      - name: Show Credentials
         run: |
-          # البحث عن Tailscale
-          $tsPaths = @(
-            "C:\Program Files\Tailscale\tailscale.exe",
-            "C:\Program Files (x86)\Tailscale\tailscale.exe",
-            "$env:ProgramFiles\Tailscale\tailscale.exe",
-            "$env:ProgramFiles (x86)\Tailscale\tailscale.exe"
-          )
-          
-          $ts = $null
-          foreach ($path in $tsPaths) {
-            if (Test-Path $path) {
-              $ts = $path
-              Write-Host "✅ Found Tailscale at: $ts"
-              break
-            }
-          }
-          
-          if (-not $ts) {
-            Write-Error "❌ Tailscale not found! Checking all locations..."
-            Get-ChildItem "C:\" -Recurse -Filter "tailscale.exe" -ErrorAction SilentlyContinue | Select-Object -First 5
-            exit 1
-          }
-          
-          # الاتصال بـ Tailscale
-          $hostname = "win-$(Get-Random -Minimum 1000 -Maximum 9999)"
-          Write-Host "🔗 Connecting to Tailscale with hostname: $hostname"
-          
-          # محاولة الاتصال مع عرض التفاصيل
-          & $ts up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=$hostname --verbose
-          
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "❌ Tailscale connection failed!"
-            Write-Host "Trying with different parameters..."
-            & $ts up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=$hostname --accept-routes
-          }
-          
-          # انتظار الحصول على IP
-          $ip = $null
-          $attempts = 0
-          while ($ip -eq $null -and $attempts -lt 20) {
-            Start-Sleep -Seconds 3
-            $ip = & $ts ip -4
-            $attempts++
-            Write-Host "⏳ Waiting for IP... ($attempts/20)"
-          }
-          
-          if ($ip) {
-            echo "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
-            Write-Host "✅ Connected! IP: $ip"
-          } else {
-            Write-Error "❌ Failed to get IP after 20 attempts"
-            Write-Host "Checking Tailscale status..."
-            & $ts status
-            exit 1
-          }
+          Write-Host "========================================="
+          Write-Host "✅ RDP READY"
+          Write-Host "========================================="
+          Write-Host "IP: $env:IP"
+          Write-Host "User: RDP"
+          Write-Host "Pass: P@ssw0rd123"
+          Write-Host "========================================="
 
-      - name: 📊 System Info
-        shell: pwsh
-        run: |
-          # معلومات النظام
-          $cpu = (Get-CimInstance -ClassName Win32_Processor).Name
-          $ram = [math]::Round((Get-CimInstance -ClassName Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 2)
-          $disk = [math]::Round((Get-PSDrive C).Free / 1GB, 2)
-          
-          echo "CPU=$cpu" >> $env:GITHUB_ENV
-          echo "RAM=$ram" >> $env:GITHUB_ENV
-          echo "DISK=$disk" >> $env:GITHUB_ENV
-
-      - name: 🎯 Connection Details
-        shell: pwsh
-        run: |
-          Clear-Host
-          Write-Host ""
-          Write-Host "╔══════════════════════════════════════════════════════════╗"
-          Write-Host "║                                                          ║"
-          Write-Host "║           🚀 RDP CONNECTION READY                       ║"
-          Write-Host "║                                                          ║"
-          Write-Host "╠══════════════════════════════════════════════════════════╣"
-          Write-Host "║                                                          ║"
-          Write-Host "║  📍 IP Address  : $env:TAILSCALE_IP                     ║"
-          Write-Host "║  👤 Username    : $env:USERNAME                         ║"
-          Write-Host "║  🔑 Password    : $env:PASSWORD                         ║"
-          Write-Host "║                                                          ║"
-          Write-Host "╠══════════════════════════════════════════════════════════╣"
-          Write-Host "║                                                          ║"
-          Write-Host "║  💻 System Info :                                       ║"
-          Write-Host "║     CPU : $env:CPU                                      ║"
-          Write-Host "║     RAM : $env:RAM GB                                   ║"
-          Write-Host "║     Disk: $env:DISK GB Free                             ║"
-          Write-Host "║                                                          ║"
-          Write-Host "╠══════════════════════════════════════════════════════════╣"
-          Write-Host "║                                                          ║"
-          Write-Host "║  ⚡ Features :                                          ║"
-          Write-Host "║     ✅ Fast Performance                                 ║"
-          Write-Host "║     🔇 Sound Disabled                                   ║"
-          Write-Host "║     💾 Large Storage                                    ║"
-          Write-Host "║     🛡️ Admin Access                                     ║"
-          Write-Host "║                                                          ║"
-          Write-Host "╚══════════════════════════════════════════════════════════╝"
-          Write-Host ""
-          Write-Host "⏱️  Session will run for ${{ github.event.inputs.duration }} hours"
-          Write-Host "🔄 Click 'Cancel workflow' to stop anytime"
-          Write-Host ""
-
-      - name: ⏳ Keep Running
-        shell: pwsh
-        run: |
-          $hours = [int]"${{ github.event.inputs.duration }}"
-          $seconds = $hours * 3600
-          $endTime = (Get-Date).AddHours($hours)
-          
-          Write-Host "⏰ Session ends at: $endTime"
-          Write-Host "📊 Monitoring RDP connection..."
-          Write-Host ""
-          
-          $counter = 0
-          while ((Get-Date) -lt $endTime) {
-            $counter++
-            $uptime = [math]::Round(((Get-Date) - (Get-Date).AddSeconds(-$counter*60)).TotalMinutes)
-            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] ✅ Active - $uptime min elapsed"
-            Start-Sleep -Seconds 60
-          }
-          
-          Write-Host ""
-          Write-Host "⏰ Time's up! Session ending..."
+      - name: Keep Alive
+        run: while ($true) { Start-Sleep -Seconds 300 }
