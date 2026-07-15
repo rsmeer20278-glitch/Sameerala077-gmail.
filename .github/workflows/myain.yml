@@ -116,9 +116,18 @@ jobs:
           echo "PASSWORD=$password" >> $env:GITHUB_ENV
           Write-Host "✅ User created: $username"
 
-      - name: 📦 Install Tailscale
+      - name: 📦 Install Tailscale (Fixed)
         shell: pwsh
         run: |
+          # تنظيف أي تثبيت سابق
+          Write-Host "🧹 Cleaning old Tailscale installation..."
+          if (Test-Path "C:\Program Files\Tailscale") {
+            Remove-Item -Path "C:\Program Files\Tailscale" -Recurse -Force -ErrorAction SilentlyContinue
+          }
+          if (Test-Path "C:\Program Files (x86)\Tailscale") {
+            Remove-Item -Path "C:\Program Files (x86)\Tailscale" -Recurse -Force -ErrorAction SilentlyContinue
+          }
+          
           # تحميل وتثبيت Tailscale
           $url = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
           $installer = "$env:TEMP\ts.msi"
@@ -135,17 +144,46 @@ jobs:
           }
           
           Remove-Item $installer -Force
-          Write-Host "✅ Tailscale installed!"
+          
+          # التحقق من التثبيت
+          Start-Sleep -Seconds 5
+          
+          $tsPaths = @(
+            "C:\Program Files\Tailscale\tailscale.exe",
+            "C:\Program Files (x86)\Tailscale\tailscale.exe"
+          )
+          
+          $found = $false
+          foreach ($path in $tsPaths) {
+            if (Test-Path $path) {
+              Write-Host "✅ Tailscale installed at: $path"
+              $found = $true
+              break
+            }
+          }
+          
+          if (-not $found) {
+            Write-Host "❌ Tailscale not found! Trying alternative installation..."
+            
+            # محاولة تثبيت باستخدام Chocolatey
+            Set-ExecutionPolicy Bypass -Scope Process -Force
+            [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+            iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+            
+            choco install tailscale -y
+          }
+          
+          Write-Host "✅ Tailscale installation complete!"
 
       - name: 🔗 Connect to Tailscale
         shell: pwsh
         run: |
-          # التحقق من وجود Tailscale
+          # البحث عن Tailscale
           $tsPaths = @(
-            "$env:ProgramFiles\Tailscale\tailscale.exe",
-            "$env:ProgramFiles (x86)\Tailscale\tailscale.exe",
             "C:\Program Files\Tailscale\tailscale.exe",
-            "C:\Program Files (x86)\Tailscale\tailscale.exe"
+            "C:\Program Files (x86)\Tailscale\tailscale.exe",
+            "$env:ProgramFiles\Tailscale\tailscale.exe",
+            "$env:ProgramFiles (x86)\Tailscale\tailscale.exe"
           )
           
           $ts = $null
@@ -158,21 +196,22 @@ jobs:
           }
           
           if (-not $ts) {
-            Write-Error "❌ Tailscale not found! Checking installation..."
-            Get-ChildItem "C:\Program Files" -Recurse -Filter "tailscale.exe" -ErrorAction SilentlyContinue
-            Get-ChildItem "C:\Program Files (x86)" -Recurse -Filter "tailscale.exe" -ErrorAction SilentlyContinue
+            Write-Error "❌ Tailscale not found! Checking all locations..."
+            Get-ChildItem "C:\" -Recurse -Filter "tailscale.exe" -ErrorAction SilentlyContinue | Select-Object -First 5
             exit 1
           }
           
           # الاتصال بـ Tailscale
           $hostname = "win-$(Get-Random -Minimum 1000 -Maximum 9999)"
-          Write-Host "🔗 Connecting to Tailscale..."
+          Write-Host "🔗 Connecting to Tailscale with hostname: $hostname"
           
-          & $ts up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=$hostname
+          # محاولة الاتصال مع عرض التفاصيل
+          & $ts up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=$hostname --verbose
           
           if ($LASTEXITCODE -ne 0) {
             Write-Error "❌ Tailscale connection failed!"
-            exit 1
+            Write-Host "Trying with different parameters..."
+            & $ts up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=$hostname --accept-routes
           }
           
           # انتظار الحصول على IP
@@ -190,6 +229,8 @@ jobs:
             Write-Host "✅ Connected! IP: $ip"
           } else {
             Write-Error "❌ Failed to get IP after 20 attempts"
+            Write-Host "Checking Tailscale status..."
+            & $ts status
             exit 1
           }
 
